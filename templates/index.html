@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Translingo — live cross-language chat</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.min.js"></script>
+<style>
+  :root{
+    --bg: #0f1416;
+    --panel: #161d20;
+    --panel-2: #1c2427;
+    --line: #2a3438;
+    --ink: #e9eef0;
+    --ink-dim: #9fb0b5;
+    --ink-faint: #66787d;
+    --accent: #4fb0a5;
+    --accent-dim: #274643;
+    --other: #c98a4b;
+    --other-dim: #4a3722;
+    --error: #c17b6b;
+    --mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+    --sans: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:var(--sans);
+    min-height:100vh;
+    display:flex; flex-direction:column; align-items:center;
+    padding:32px 16px 60px;
+  }
+  .wrap{ width:100%; max-width:640px; }
+  header{ margin-bottom:22px; }
+  .kicker{
+    font-family:var(--mono); font-size:12px; letter-spacing:0.02em;
+    color:var(--ink-faint); margin:0 0 6px;
+  }
+  h1{ font-size:26px; margin:0 0 8px; font-weight:600; letter-spacing:-0.01em; }
+  .sub{ color:var(--ink-dim); font-size:14px; max-width:60ch; line-height:1.55; margin:0; }
+
+  .card{
+    background:var(--panel); border:1px solid var(--line); border-radius:14px;
+    padding:22px; margin-top:20px;
+  }
+
+  label{ display:block; font-size:12.5px; color:var(--ink-dim); margin-bottom:6px; }
+  input[type=text], select{
+    width:100%; background:var(--panel-2); color:var(--ink);
+    border:1px solid var(--line); border-radius:8px; padding:10px 12px;
+    font-family:var(--sans); font-size:14px; margin-bottom:16px;
+  }
+  input[type=text]:focus, select:focus{ outline:none; border-color:var(--ink-faint); }
+
+  button{
+    font-family:var(--sans); font-size:14px; font-weight:600;
+    border:none; border-radius:8px; padding:11px 18px; cursor:pointer;
+  }
+  .btn-primary{ background:var(--ink); color:var(--bg); width:100%; }
+  .btn-primary:hover{ opacity:0.88; }
+  .btn-secondary{
+    background:transparent; color:var(--ink); border:1px solid var(--line);
+    width:100%; margin-top:8px;
+  }
+  .btn-secondary:hover{ border-color:var(--ink-faint); }
+
+  .divider{
+    display:flex; align-items:center; gap:12px; margin:22px 0;
+    color:var(--ink-faint); font-size:12px; font-family:var(--mono);
+  }
+  .divider::before, .divider::after{ content:""; flex:1; height:1px; background:var(--line); }
+
+  .error-text{ color:var(--error); font-size:13px; margin-top:-6px; margin-bottom:14px; display:none; }
+
+  /* Chat screen */
+  #chatScreen{ display:none; }
+  .chat-topbar{
+    display:flex; align-items:center; justify-content:space-between;
+    background:var(--panel); border:1px solid var(--line); border-radius:14px 14px 0 0;
+    padding:12px 16px;
+  }
+  .room-info{ font-family:var(--mono); font-size:12.5px; color:var(--ink-dim); }
+  .room-code{ color:var(--ink); font-weight:600; }
+  .leave-btn{
+    background:transparent; color:var(--ink-faint); border:1px solid var(--line);
+    padding:6px 12px; font-size:12px;
+  }
+  .leave-btn:hover{ color:var(--ink); border-color:var(--ink-faint); }
+
+  .participants-bar{
+    font-family:var(--mono); font-size:11.5px; color:var(--ink-faint);
+    padding:8px 16px; border-left:1px solid var(--line); border-right:1px solid var(--line);
+    background:var(--panel);
+  }
+
+  .thread{
+    height:440px; overflow-y:auto; padding:18px 16px;
+    display:flex; flex-direction:column; gap:14px;
+    background:var(--panel); border-left:1px solid var(--line); border-right:1px solid var(--line);
+  }
+  .thread::-webkit-scrollbar{ width:8px; }
+  .thread::-webkit-scrollbar-thumb{ background:var(--line); border-radius:4px; }
+
+  .msg{ display:flex; max-width:78%; }
+  .msg.mine{ align-self:flex-end; flex-direction:row-reverse; }
+  .msg.theirs{ align-self:flex-start; }
+  .msg.sys{
+    align-self:center; max-width:90%; font-family:var(--mono);
+    font-size:11px; color:var(--ink-faint);
+  }
+
+  .bubble{ border-radius:12px; padding:10px 13px; border:1px solid var(--line); }
+  .mine .bubble{ background:var(--accent-dim); border-top-right-radius:4px; }
+  .theirs .bubble{ background:var(--other-dim); border-top-left-radius:4px; }
+
+  .bubble-meta{
+    font-family:var(--mono); font-size:10.5px; color:var(--ink-faint);
+    margin-bottom:4px; display:flex; gap:6px; align-items:center;
+  }
+  .mine .bubble-meta{ justify-content:flex-end; }
+  .bubble-text{ font-size:14.5px; line-height:1.45; }
+  .bubble-orig{
+    font-size:12px; color:var(--ink-faint); margin-top:6px;
+    padding-top:6px; border-top:1px dashed var(--line); display:none;
+  }
+  .bubble.show-orig .bubble-orig{ display:block; }
+  .toggle-orig{
+    font-family:var(--mono); font-size:10px; color:var(--ink-faint);
+    background:none; border:none; cursor:pointer; padding:0; margin-top:6px;
+    text-decoration:underline; text-underline-offset:2px;
+  }
+  .toggle-orig:hover{ color:var(--ink); }
+  .bubble-error{
+    font-size:11.5px; color:var(--error); margin-top:6px;
+  }
+
+  .composer{
+    border:1px solid var(--line); border-top:none; border-radius:0 0 14px 14px;
+    padding:12px 14px; display:flex; gap:8px; background:var(--panel-2);
+  }
+  .composer input[type=text]{
+    flex:1; margin-bottom:0;
+  }
+  .composer button{
+    background:var(--ink); color:var(--bg); flex:none;
+  }
+  .composer button:hover{ opacity:0.88; }
+
+  .note{
+    margin-top:16px; font-size:12px; color:var(--ink-faint); line-height:1.6;
+    border-left:2px solid var(--line); padding-left:12px;
+  }
+  .note code{
+    font-family:var(--mono); background:var(--panel-2); padding:1px 5px;
+    border-radius:4px; font-size:11px; color:var(--ink-dim);
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <p class="kicker">LIVE TRANSLATION CHAT</p>
+    <h1>Chat across languages, in real time</h1>
+    <p class="sub">Start a room or join one with a code. Each person picks their own language — every message is translated on the way in, powered by Ollama Cloud.</p>
+  </header>
+
+  <!-- LANDING -->
+  <div id="landingScreen">
+    <div class="card">
+      <label for="nameInput">Your name</label>
+      <input type="text" id="nameInput" placeholder="e.g. Priya" maxlength="30">
+
+      <label for="langSelect">Your language</label>
+      <select id="langSelect">
+        {% for code, label in langs.items() %}
+        <option value="{{ code }}">{{ label }}</option>
+        {% endfor %}
+      </select>
+
+      <button class="btn-primary" id="createBtn">Start a new chat</button>
+
+      <div class="divider">OR JOIN EXISTING</div>
+
+      <label for="roomInput">Room code</label>
+      <input type="text" id="roomInput" placeholder="e.g. 7F3A2B" maxlength="6" style="text-transform:uppercase;">
+      <p class="error-text" id="joinError"></p>
+      <button class="btn-secondary" id="joinBtn">Join room</button>
+    </div>
+  </div>
+
+  <!-- CHAT -->
+  <div id="chatScreen">
+    <div class="chat-topbar">
+      <div class="room-info">Room <span class="room-code" id="roomCodeDisplay"></span> — share this code to invite someone</div>
+      <button class="leave-btn" id="leaveBtn">Leave</button>
+    </div>
+    <div class="participants-bar" id="participantsBar"></div>
+    <div class="thread" id="thread"></div>
+    <div class="composer">
+      <input type="text" id="composerInput" placeholder="Type a message…" autocomplete="off">
+      <button id="composerSend">Send</button>
+    </div>
+  </div>
+
+  <p class="note">
+    Messages go through this app's server, which calls Ollama Cloud
+    (<code>gemma4:31b-cloud</code>) to translate each message into every other
+    participant's language before delivering it. The API key stays server-side.
+  </p>
+</div>
+
+<script>
+const LANG_LABELS = {{ langs | tojson }};
+const socket = io();
+
+let myName = "";
+let myLang = "en";
+let myRoom = "";
+
+const landingScreen = document.getElementById("landingScreen");
+const chatScreen = document.getElementById("chatScreen");
+const thread = document.getElementById("thread");
+const joinError = document.getElementById("joinError");
+
+function scrollToBottom(){
+  thread.scrollTop = thread.scrollHeight;
+}
+
+function showChatScreen(){
+  landingScreen.style.display = "none";
+  chatScreen.style.display = "block";
+  document.getElementById("roomCodeDisplay").textContent = myRoom;
+}
+
+function renderParticipants(list){
+  const bar = document.getElementById("participantsBar");
+  const names = list.map(p => `${p.name} (${LANG_LABELS[p.lang] || p.lang})`);
+  bar.textContent = names.length ? `In this chat: ${names.join(", ")}` : "";
+}
+
+function addSystemMessage(text){
+  const row = document.createElement("div");
+  row.className = "msg sys";
+  row.textContent = text;
+  thread.appendChild(row);
+  scrollToBottom();
+}
+
+function addChatMessage(msg){
+  const row = document.createElement("div");
+  row.className = `msg ${msg.self ? "mine" : "theirs"}`;
+
+  const bubble = document.createElement("div");
+  bubble.className = "bubble";
+
+  const meta = document.createElement("div");
+  meta.className = "bubble-meta";
+  meta.textContent = msg.self ? "You" : `${msg.from} · ${LANG_LABELS[msg.from_lang] || msg.from_lang}`;
+  bubble.appendChild(meta);
+
+  const textEl = document.createElement("div");
+  textEl.className = "bubble-text";
+  textEl.textContent = msg.text;
+  bubble.appendChild(textEl);
+
+  if(msg.error){
+    const errEl = document.createElement("div");
+    errEl.className = "bubble-error";
+    errEl.textContent = `Translation failed: ${msg.error}`;
+    bubble.appendChild(errEl);
+  } else if(msg.translated){
+    const orig = document.createElement("div");
+    orig.className = "bubble-orig";
+    orig.textContent = `Original: ${msg.original}`;
+    bubble.appendChild(orig);
+
+    const toggle = document.createElement("button");
+    toggle.className = "toggle-orig";
+    toggle.textContent = "show original";
+    toggle.addEventListener("click", () => {
+      bubble.classList.toggle("show-orig");
+      toggle.textContent = bubble.classList.contains("show-orig") ? "hide original" : "show original";
+    });
+    bubble.appendChild(toggle);
+  }
+
+  row.appendChild(bubble);
+  thread.appendChild(row);
+  scrollToBottom();
+}
+
+document.getElementById("createBtn").addEventListener("click", () => {
+  myName = document.getElementById("nameInput").value.trim() || "Guest";
+  myLang = document.getElementById("langSelect").value;
+  socket.emit("create_room", { name: myName, lang: myLang });
+});
+
+document.getElementById("joinBtn").addEventListener("click", () => {
+  myName = document.getElementById("nameInput").value.trim() || "Guest";
+  myLang = document.getElementById("langSelect").value;
+  const room = document.getElementById("roomInput").value.trim().toUpperCase();
+  joinError.style.display = "none";
+  if(!room){
+    joinError.textContent = "Enter a room code.";
+    joinError.style.display = "block";
+    return;
+  }
+  socket.emit("join_room_request", { name: myName, lang: myLang, room });
+});
+
+socket.on("joined", data => {
+  myRoom = data.room;
+  showChatScreen();
+  renderParticipants(data.participants);
+});
+
+socket.on("join_error", data => {
+  joinError.textContent = data.error;
+  joinError.style.display = "block";
+});
+
+socket.on("participant_update", data => {
+  renderParticipants(data.participants);
+});
+
+socket.on("system_message", data => {
+  addSystemMessage(data.text);
+});
+
+socket.on("new_message", data => {
+  addChatMessage(data);
+});
+
+document.getElementById("composerSend").addEventListener("click", sendMessage);
+document.getElementById("composerInput").addEventListener("keydown", e => {
+  if(e.key === "Enter") sendMessage();
+});
+
+function sendMessage(){
+  const input = document.getElementById("composerInput");
+  const text = input.value.trim();
+  if(!text || !myRoom) return;
+  socket.emit("send_message", { room: myRoom, text });
+  input.value = "";
+}
+
+document.getElementById("leaveBtn").addEventListener("click", () => {
+  window.location.reload();
+});
+</script>
+</body>
+</html>
